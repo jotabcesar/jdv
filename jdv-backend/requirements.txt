@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+SQLAlchemy
+psycopg2-binary
+python-dotenv
+pydantic
+alembic
+passlib[bcrypt]
+python-jose[cryptography]
+python-dateutil
+reportlab
+openpyxl
+python-multipart
+Pillow

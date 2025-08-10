@@ -1,0 +1,1 @@
+Veja o repositório principal para instruções. Use Docker e scripts de build.
