@@ -1,15 +1,48 @@
-name: Android Build
-on: [push]
+name: Android Build (KivyMD + Buildozer)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  tags: [ 'v*' ]
+
 jobs:
-  build:
+  android:
     runs-on: ubuntu-latest
+    env:
+      APP_DIR: jdv-app
+      DOCKER_BUILDKIT: "0"
+      BUILDKIT_PROGRESS: plain
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
-      - run: sudo apt-get update && sudo apt-get install -y zip unzip
-      - run: docker run --rm -v "$PWD/jdv-app":/work -w /work kivy/buildozer:latest buildozer android debug
-      - uses: actions/upload-artifact@v4
         with:
-          name: jdv-app
-          path: jdv-app/bin/*
+          python-version: '3.11'
+
+      - name: Install basic tools
+        run: sudo apt-get update && sudo apt-get install -y zip unzip
+
+      - name: Pull buildozer image (force amd64)
+        run: docker pull --platform=linux/amd64 kivy/buildozer:latest
+
+      - name: Build (Debug on push/PR, Release on tag)
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "🔐 Release"
+            docker run --rm --platform=linux/amd64 -v "$PWD/${APP_DIR}":/work -w /work \
+              kivy/buildozer:latest buildozer android release
+          else
+            echo "🧪 Debug"
+            docker run --rm --platform=linux/amd64 -v "$PWD/${APP_DIR}":/work -w /work \
+              kivy/buildozer:latest buildozer android debug
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: jdv-android-${{ github.run_id }}
+          path: |
+            ${{ env.APP_DIR }}/bin/*.apk
+            ${{ env.APP_DIR }}/bin/*.aab
+          if-no-files-found: warn
