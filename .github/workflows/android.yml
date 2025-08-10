@@ -1,48 +1,115 @@
-name: Android Build (KivyMD + Buildozer)
+name: Android Build (Buildozer without Docker)
 
 on:
   push:
-    branches: [main, master]
-    tags: ['v*']
+    branches: [ "main", "master" ]
   pull_request:
+  tags: [ "v*" ]
+  workflow_dispatch:
 
 jobs:
   android:
     runs-on: ubuntu-latest
+
     env:
       APP_DIR: jdv-app
-      DOCKER_BUILDKIT: "0"
-      BUILDKIT_PROGRESS: plain
+      # valores padrão (override em tag)
+      VERSION_NAME: 0.1.0
+      VERSION_CODE: ${{ github.run_number }}
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Java para buildozer/SDK
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
         with:
-          python-version: '3.11'
+          distribution: temurin
+          java-version: '17'
 
-      - name: Instalar ferramentas básicas
-        run: sudo apt-get update && sudo apt-get install -y zip unzip
+      # Python pro buildozer
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
 
-      - name: Puxar imagem do buildozer (forçar amd64)
-        run: docker pull --platform=linux/amd64 kivy/buildozer:latest
+      # Dependências do sistema
+      - name: System deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip unzip libffi-dev libssl-dev autoconf automake libtool pkg-config
 
-      - name: Build (Depuração no push/PR, Liberação na tag)
+      # Cache dos diretórios pesados do buildozer (SDK/NDK/.buildozer)
+      - name: Cache buildozer dirs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            ${{ env.APP_DIR }}/.buildozer
+          key: ${{ runner.os }}-buildozer-${{ hashFiles(format('{0}/buildozer.spec', env.APP_DIR)) }}
+          restore-keys: |
+            ${{ runner.os }}-buildozer-
+
+      # Instala buildozer + Cython/Kivy deps
+      - name: Install buildozer
+        run: |
+          python -m pip install --upgrade pip wheel setuptools
+          pip install buildozer Cython==0.29.36
+
+      # Se for tag v*, ajustar versão e injetar secrets/keystore
+      - name: Prepare release (only on tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+          KEYALIAS_PASS: ${{ secrets.KEYALIAS_PASS }}
+        run: |
+          set -e
+          cd "$APP_DIR"
+
+          # version name a partir da tag (v1.2.3 -> 1.2.3) e version code = run_number
+          echo "VERSION_NAME=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+          echo "VERSION_CODE=${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
+
+          # escrever keystore
+          echo "$KEYSTORE_BASE64" | base64 -d > jdv.keystore
+
+          # editar buildozer.spec: version e numeric_version
+          sed -i "s/^version *= *.*/version = ${GITHUB_REF_NAME#v}/" buildozer.spec || true
+          grep -q "^android.numeric_version" buildozer.spec \
+            && sed -i "s/^android.numeric_version *= *.*/android.numeric_version = ${GITHUB_RUN_NUMBER}/" buildozer.spec \
+            || printf "\nandroid.numeric_version = %s\n" "${GITHUB_RUN_NUMBER}" >> buildozer.spec
+
+          # injetar senhas substituindo placeholders (mantém segredo fora do repo)
+          sed -i "s/{KESTORE_PASS}/${KEYSTORE_PASS}/g" buildozer.spec
+          sed -i "s/{KEYALIAS_PASS}/${KEYALIAS_PASS}/g" buildozer.spec
+
+      # Build
+      - name: Build (Debug on push/PR, Release on tag)
+        working-directory: ${{ env.APP_DIR }}
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            echo "🔐 Liberação"
-            docker run --rm --platform=linux/amd64 -v "$PWD/${APP_DIR}":/work -w /work \
-              kivy/buildozer:latest buildozer android release
+            echo "🔐 Release"; buildozer android release
           else
-            echo "🧪 Depurar"
-            docker run --rm --platform=linux/amd64 -v "$PWD/${APP_DIR}":/work -w /work \
-              kivy/buildozer:latest buildozer android debug
+            echo "🧪 Debug"; buildozer android debug
           fi
 
-      - name: Carregar artefatos
+      # Organizar artefatos
+      - name: Collect artifacts
+        run: |
+          mkdir -p artifacts
+          if ls ${APP_DIR}/bin/*.aab 1> /dev/null 2>&1; then
+            cp ${APP_DIR}/bin/*.aab "artifacts/JDV-${{ env.VERSION_NAME }}-${{ env.VERSION_CODE }}.aab"
+          fi
+          if ls ${APP_DIR}/bin/*.apk 1> /dev/null 2>&1; then
+            cp ${APP_DIR}/bin/*.apk "artifacts/JDV-${{ env.VERSION_NAME }}-${{ env.VERSION_CODE }}.apk"
+          fi
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: jdv-android-${{ github.run_id }}
-          path: |
-            ${{ env.APP_DIR }}/bin/*.apk
-            ${{ env.APP_DIR }}/bin/*.aab
-          if-no-files-found: warn
+          path: artifacts/*
+          if-no-files-found: error
