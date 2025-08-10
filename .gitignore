@@ -26,3 +26,6 @@ jdv-backend/jdv.db
 
 # Uploads (se gerar)
 jdv-backend/uploads/
+
+jdv-app/jdv.keystore
+keystore.b64
