@@ -1,0 +1,28 @@
+﻿# Python
+__pycache__/
+*.pyc
+
+# Virtual envs
+.venv/
+jdv-backend/.venv/
+
+# Build / dist
+jdv-app/bin/
+dist/
+build/
+.buildozer/
+jdv-app/.buildozer/
+
+# IDE
+.vscode/
+.idea/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Banco local
+jdv-backend/jdv.db
+
+# Uploads (se gerar)
+jdv-backend/uploads/
